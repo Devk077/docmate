@@ -1,0 +1,19 @@
+[global]
+# Disable file watcher to prevent PyTorch compatibility issues
+developmentMode = false
+
+[server]
+fileWatcherType = "none"
+runOnSave = false
+
+[runner]
+fastReruns = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base="light"
+primaryColor="#8a8a8a"
+secondaryBackgroundColor="#ececec"
+textColor="#000000"
