@@ -515,11 +515,12 @@ class GroupOrchestrator:
             self._compact_history(session_id, turn_count, group_context)
 
         # Stream each doc in order
-        last_doc_index = len(speaking_queue) - 1
+        max_agent_turns = 3
+        current_turn = 0
         previous_answers = []
 
-        for i, room_doc in enumerate(speaking_queue):
-            is_last = i == last_doc_index
+        while speaking_queue and current_turn < max_agent_turns:
+            room_doc = speaking_queue.pop(0)
             accumulated = ""
             web_search_performed = False
 
@@ -528,7 +529,7 @@ class GroupOrchestrator:
                 answer_relay = "No other documents have spoken yet."
                 if previous_answers:
                     answer_relay = "\n".join(
-                        f"[{name} already answered this question]:\n{ans}"
+                        f"[{name} already answered this question/query]:\n{ans}"
                         for name, ans in previous_answers
                     )
 
@@ -560,22 +561,28 @@ class GroupOrchestrator:
                         accumulated = cleaned
                         chunk_text = ""  # swallow the token chunk
 
-                    yield {
-                        "speaker": room_doc.persona_name,
-                        "document_id": room_doc.document_id,
-                        "answer_chunk": chunk_text,
-                        "answer": accumulated,
-                        "is_complete": is_complete,
-                        "round_complete": is_complete and is_last,
-                        "web_search_performed": web_search_performed,
-                        "source_documents": chunk_dict.get("source_documents", []),
-                        "similarity_metrics": chunk_dict.get("similarity_metrics", {}),
-                    }
-
                     if is_complete:
-                        # Diminishing returns: if this doc's response is very
-                        # similar to a previous doc's response, mark it spent
-                        # (simple proxy: if accumulated is very short, skip)
+                        # We have the full string, parse for hand-offs
+                        mentioned_peer = self.parse_mention(accumulated)
+                        will_handoff = False
+                        if mentioned_peer and mentioned_peer.document_id != room_doc.document_id:
+                            will_handoff = True
+                        
+                        round_is_truly_complete = (len(speaking_queue) == 0) and (not will_handoff)
+
+                        yield {
+                            "speaker": room_doc.persona_name,
+                            "document_id": room_doc.document_id,
+                            "answer_chunk": chunk_text,
+                            "answer": accumulated,
+                            "is_complete": True,
+                            "round_complete": round_is_truly_complete,
+                            "web_search_performed": web_search_performed,
+                            "source_documents": chunk_dict.get("source_documents", []),
+                            "similarity_metrics": chunk_dict.get("similarity_metrics", {}),
+                        }
+
+                        # Diminishing returns proxy check
                         room_doc.spent = len(accumulated.strip()) < 30
 
                         # Save this doc's final message to PostgreSQL
@@ -589,22 +596,39 @@ class GroupOrchestrator:
                             document_id=room_doc.document_id,
                         )
                         previous_answers.append((room_doc.persona_name, accumulated))
+
+                        if will_handoff:
+                            logger.info(f"{__module_name__} - {room_doc.persona_name} handballed to {mentioned_peer.persona_name}")
+                            speaking_queue.insert(0, mentioned_peer)
+
                         break
+                    else:
+                        yield {
+                            "speaker": room_doc.persona_name,
+                            "document_id": room_doc.document_id,
+                            "answer_chunk": chunk_text,
+                            "answer": accumulated,
+                            "is_complete": False,
+                            "round_complete": False,
+                            "web_search_performed": web_search_performed,
+                            "source_documents": chunk_dict.get("source_documents", []),
+                            "similarity_metrics": chunk_dict.get("similarity_metrics", {}),
+                        }
 
             except Exception as e:
-                logger.error(
-                    f"{__module_name__} - Error streaming from '{room_doc.persona_name}': {e}"
-                )
+                logger.error(f"{__module_name__} - Error streaming from '{room_doc.persona_name}': {e}")
                 yield {
                     "speaker": room_doc.persona_name,
                     "document_id": room_doc.document_id,
                     "answer": f"I encountered an error while preparing my response: {str(e)}",
                     "answer_chunk": "",
                     "is_complete": True,
-                    "round_complete": is_last,
+                    "round_complete": len(speaking_queue) == 0,
                     "web_search_performed": False,
                     "error": str(e),
                 }
+
+            current_turn += 1
 
     # ──────────────────────────────────────────────────────────
     # Context & Compaction
