@@ -477,15 +477,10 @@ class GroupOrchestrator:
         # Determine speaking queue
         mentioned_doc = self.parse_mention(question)
         if mentioned_doc:
-            # Mentioned doc speaks FIRST; other qualifying docs follow after
-            other_docs = [
-                d for d in self.route(question)
-                if d.document_id != mentioned_doc.document_id
-            ]
-            speaking_queue = [mentioned_doc] + other_docs
+            # Strict @mention — only the addressed document speaks
+            speaking_queue = [mentioned_doc]
             logger.info(
-                f"{__module_name__} - @mention routing: '{mentioned_doc.persona_name}' first, "
-                f"then {[d.persona_name for d in other_docs]}"
+                f"{__module_name__} - @mention strict mode: only '{mentioned_doc.persona_name}' will answer"
             )
         else:
             speaking_queue = self.route(question)
@@ -522,29 +517,29 @@ class GroupOrchestrator:
 
         # Stream each doc in order
         last_doc_index = len(speaking_queue) - 1
+        previous_answers = []
+
         for i, room_doc in enumerate(speaking_queue):
             is_last = i == last_doc_index
             accumulated = ""
             web_search_performed = False
 
             try:
-                # Inject group conversation context into this doc's chat history
-                # so the {chat_history} variable in the original prompt template
-                # gives it full awareness of what's been said in this room.
-                if group_context:
-                    from langchain_core.messages import SystemMessage
-                    # Replace any stale context with fresh group context
-                    # (we store it as a single SystemMessage at history[0])
-                    if room_doc.rag.chat_history.messages and isinstance(
-                        room_doc.rag.chat_history.messages[0], SystemMessage
-                    ):
-                        room_doc.rag.chat_history.messages[0] = SystemMessage(
-                            content=f"[Group Room Context]\n{group_context}"
-                        )
-                    else:
-                        room_doc.rag.chat_history.messages.insert(
-                            0, SystemMessage(content=f"[Group Room Context]\n{group_context}")
-                        )
+                # Build context for this specific doc's turn
+                current_context = group_context
+                if previous_answers:
+                    answer_relay = "\n".join(
+                        f"[{name} already answered this question]:\n{ans}"
+                        for name, ans in previous_answers
+                    )
+                    current_context = f"{group_context}\n\n[ANSWERS SO FAR THIS ROUND]\n{answer_relay}"
+
+                # Wire in the group-aware prompt with full current context
+                room_doc.rag.set_group_context(
+                    persona_name=room_doc.persona_name,
+                    all_personas=[d.persona_name for d in self._docs.values()],
+                    conversation_context=current_context,
+                )
 
                 for chunk_dict in room_doc.rag.query_stream(question):
 
@@ -595,6 +590,7 @@ class GroupOrchestrator:
                             sender_name=room_doc.persona_name,
                             document_id=room_doc.document_id,
                         )
+                        previous_answers.append((room_doc.persona_name, accumulated))
                         break
 
             except Exception as e:
@@ -733,17 +729,13 @@ class GroupOrchestrator:
     # ──────────────────────────────────────────────────────────
 
     def get_participants(self) -> List[Dict[str, Any]]:
-        """
-        Return a list of participant info dicts for the UI Participants Panel.
-
-        Returns:
-            List of dicts with keys: document_id, persona_name, collection_name, spent
-        """
+        """Return participant info dicts for the UI, including filename for preview type detection."""
         return [
             {
                 "document_id": doc.document_id,
                 "persona_name": doc.persona_name,
                 "collection_name": doc.collection_name,
+                "filename": os.path.basename(doc.file_path) if doc.file_path else "",
                 "spent": doc.spent,
             }
             for doc in self._docs.values()

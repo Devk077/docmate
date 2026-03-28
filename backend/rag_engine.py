@@ -224,8 +224,30 @@ class DocumentRAG:
             }
 
     def _setup_rag_chain(self):
-        """Setup the RAG chain with document personality prompts."""
-        prompt_template = load_prompt_template()
+        """Setup the default single-document RAG chain."""
+        self._build_chain(load_prompt_template())
+
+    def set_group_context(
+        self,
+        persona_name: str,
+        all_personas: list[str],
+        conversation_context: str,
+    ) -> None:
+        """
+        Swap the RAG chain's prompt for the group-aware template.
+        Called by GroupOrchestrator before each doc's turn in a round.
+        """
+        from backend.prompts.group_prompts import load_group_chat_template
+
+        new_template = load_group_chat_template(
+            persona_name=persona_name,
+            all_personas=all_personas,
+            conversation_context=conversation_context,
+        )
+        self._build_chain(new_template)
+
+    def _build_chain(self, prompt_template):
+        """Helper to construct the LCEL chain with a specific prompt template."""
         format_docs = lambda docs: "\n\n".join(doc.page_content for doc in docs)
 
         # Helper function to safely get similarity metrics
@@ -272,6 +294,12 @@ class DocumentRAG:
             if isinstance(input_data, dict):
                 return input_data.get("relevance_context", {})
             return {}
+            
+        # Helper function to selectively include previous answers
+        def extract_previous_answers(input_data):
+            if isinstance(input_data, dict):
+                return input_data.get("previous_answers", "No other documents have spoken yet.")
+            return "No other documents have spoken yet."
 
         # Create the chain with enhanced context for safety and relevance
         self.chain = (
@@ -289,6 +317,7 @@ class DocumentRAG:
                 ),
                 "safety_context": extract_safety_context,
                 "relevance_context": extract_relevance_context,
+                "previous_answers": extract_previous_answers,
             }
             | prompt_template
             | self.llm
@@ -535,12 +564,17 @@ Please provide context for: {question}"""
             }
 
         except Exception as e:
+            import traceback
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in query_stream: {e}\n{traceback.format_exc()}")
             yield {
                 "answer": "I'm sorry, I encountered an error while trying to answer your question. Please try rephrasing it.",
                 "source_documents": [],
                 "error": str(e),
                 "confidence_score": 0.0,
                 "is_complete": True,
+                "answer_chunk": "I'm sorry, I encountered an error while trying to answer your question.",
             }
 
     def _assess_query_safety(self, question: str) -> Dict[str, Any]:

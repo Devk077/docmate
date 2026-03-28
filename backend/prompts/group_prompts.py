@@ -227,11 +227,14 @@ def load_group_chat_template(
 ## Relevance Assessment
 {relevance_context}
 
+## What Other Documents Have Said This Round
+{previous_answers}
+
 ## User Question
 {question}
 
 ## Instructions
-Respond as {persona_name}, drawing from your own content. If this question is more relevant to a peer document, you may acknowledge that briefly — but still contribute your perspective. Stay in character at all times.""",
+Respond as {persona_name}, drawing from your own content. If this question is more relevant to a peer document, you may acknowledge that briefly — but still contribute your perspective. Stay in character at all times.""".replace("{persona_name}", persona_name),
         ),
     ])
 
