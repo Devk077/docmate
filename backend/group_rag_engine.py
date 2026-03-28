@@ -308,28 +308,21 @@ class GroupOrchestrator:
 
     def parse_mention(self, message: str) -> Optional[RoomDocument]:
         """
-        Check if the user's message starts with @PersonaName and, if so,
+        Check if the user's message contains @PersonaName and, if so,
         return the corresponding RoomDocument — bypassing the vector gate.
 
-        Handles multi-word persona names such as "Dev's Tech Resume" by
-        trying to match the longest possible prefix after @.
-
-        Matching is case-insensitive. Partial prefix matches are supported
-        (e.g. "@Dev" matches "Dev's Tech Resume").
+        Handles multi-word persona names such as "Dev's Tech Resume" anywhere in the
+        text, and normalizes smart quotes to prevent matching failures.
+        Partial prefix matches are supported (e.g. "@Dev" matches "Dev's Tech Resume").
         """
-        stripped = message.strip()
-        if not stripped.startswith('@'):
-            return None
+        msg_norm = message.replace('’', "'").lower()
 
-        # Extract everything after @ until we hit the question text.
-        # Heuristic: the persona name ends at the first '?' or sentence boundary
-        # OR we try all persona names to see if the message starts with @<name>.
-        mention_body = stripped[1:]  # everything after @
-
-        # Try exact/prefix match against all known persona names (longest first)
         ranked = sorted(self._persona_index.keys(), key=len, reverse=True)
+        
+        # 1. Try exact matches: @Full Persona Name anywhere in the message
         for persona_lower in ranked:
-            if mention_body.lower().startswith(persona_lower):
+            p_norm = persona_lower.replace('’', "'").lower()
+            if f"@{p_norm}" in msg_norm:
                 doc_id = self._persona_index[persona_lower]
                 doc = self._docs.get(doc_id)
                 logger.info(
@@ -337,12 +330,18 @@ class GroupOrchestrator:
                 )
                 return doc
 
-        # Fallback: match first word after @ against any substring in persona names
-        first_word = re.match(r"(\S+)", mention_body)
-        if first_word:
-            fw = first_word.group(1).lower().rstrip('?.,!')
+        # 2. Fallback: match first word after @ against any substring in persona names
+        # Extract all @words from the message. Using \\w+ captures letters/numbers without punctuation.
+        # This gracefully handles "@Aditya's" -> "aditya"
+        matches = re.finditer(r"@([\w\-]+)", msg_norm)
+        for match in matches:
+            fw = match.group(1)
+            # Ignore tiny matches
+            if len(fw) < 3:
+                continue
             for persona_lower, doc_id in self._persona_index.items():
-                if fw in persona_lower:
+                p_norm = persona_lower.replace('’', "'").lower()
+                if fw in p_norm:
                     doc = self._docs.get(doc_id)
                     logger.info(
                         f"{__module_name__} - @mention partial match '{fw}' → '{doc.persona_name if doc else '?'}'"
