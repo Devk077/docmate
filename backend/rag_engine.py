@@ -443,7 +443,7 @@ Please provide context for: {question}"""
             return enhanced_query
         return question
 
-    def query(self, question: str) -> Dict[str, Any]:
+    def query(self, question: str, previous_answers: str = "No other documents have spoken yet.") -> Dict[str, Any]:
         """
         Query the document with enhanced safety checks and personality responses.
 
@@ -473,6 +473,7 @@ Please provide context for: {question}"""
                     "question": question,
                     "safety_context": safety_assessment,
                     "relevance_context": relevance_assessment,
+                    "previous_answers": previous_answers,
                 }
             )
 
@@ -500,7 +501,7 @@ Please provide context for: {question}"""
                 "confidence_score": 0.0,
             }
 
-    def query_stream(self, question: str) -> Iterator[Dict[str, Any]]:
+    def query_stream(self, question: str, previous_answers: str = "No other documents have spoken yet.") -> Iterator[Dict[str, Any]]:
         """
         Query the document with streaming response.
 
@@ -527,6 +528,7 @@ Please provide context for: {question}"""
                     "question": question,
                     "safety_context": safety_assessment,
                     "relevance_context": relevance_assessment,
+                    "previous_answers": previous_answers,
                 }
             ):
                 accumulated_response += chunk

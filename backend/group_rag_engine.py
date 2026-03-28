@@ -525,22 +525,21 @@ class GroupOrchestrator:
 
             try:
                 # Build context for this specific doc's turn
-                current_context = group_context
+                answer_relay = "No other documents have spoken yet."
                 if previous_answers:
                     answer_relay = "\n".join(
                         f"[{name} already answered this question]:\n{ans}"
                         for name, ans in previous_answers
                     )
-                    current_context = f"{group_context}\n\n[ANSWERS SO FAR THIS ROUND]\n{answer_relay}"
 
                 # Wire in the group-aware prompt with full current context
                 room_doc.rag.set_group_context(
                     persona_name=room_doc.persona_name,
                     all_personas=[d.persona_name for d in self._docs.values()],
-                    conversation_context=current_context,
+                    conversation_context=group_context,
                 )
 
-                for chunk_dict in room_doc.rag.query_stream(question):
+                for chunk_dict in room_doc.rag.query_stream(question, previous_answers=answer_relay):
 
                     chunk_text: str = chunk_dict.get("answer_chunk", "")
                     accumulated = chunk_dict.get("answer", accumulated)
